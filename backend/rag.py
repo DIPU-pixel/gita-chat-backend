@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────
-# rag.py - RAG System with Crisis + Resources
+# rag.py - RAG System with Crisis + Resources + Context
 # ─────────────────────────────────────────
 
 import os
@@ -21,6 +21,7 @@ anthropic_client = anthropic.Anthropic(
 )
 print("✅ RAG system ready!")
 
+
 def search_relevant_verses(question, top_k=3):
     query_embedding = model.encode([question]).tolist()
     results = collection.query(
@@ -29,6 +30,7 @@ def search_relevant_verses(question, top_k=3):
     )
     return results
 
+
 def detect_language(text):
     hindi_chars = set('अआइईउऊएऐओऔकखगघचछजझटठडढणतथदधनपफबभमयरलवशषसह')
     for char in text:
@@ -36,7 +38,13 @@ def detect_language(text):
             return 'hindi'
     return 'english'
 
-def build_prompt(question, search_results, language):
+
+def build_messages(question, search_results, language, conversation_history=None):
+    """
+    Build messages array for Claude.
+    conversation_history = list of past {question, answer} dicts from this session.
+    Last 5 messages are passed for context memory.
+    """
     verses_text = ""
     for doc, meta in zip(
         search_results['documents'][0],
@@ -46,14 +54,12 @@ def build_prompt(question, search_results, language):
         verses_text += f"\nSanskrit: {meta['sanskrit'][:200]}"
         verses_text += f"\nHindi: {meta['hindi'][:200]}\n"
 
+    # System instruction based on language
     if language == 'hindi':
-        prompt = f"""आप एक बुद्धिमान आध्यात्मिक गुरु हैं जो केवल भगवद्गीता के आधार पर उत्तर देते हैं।
+        system_prompt = f"""आप एक बुद्धिमान आध्यात्मिक गुरु हैं जो केवल भगवद्गीता के आधार पर उत्तर देते हैं।
 
 यहाँ प्रासंगिक श्लोक हैं:
 {verses_text}
-
-इस प्रश्न का उत्तर केवल ऊपर दिए गए श्लोकों के आधार पर दें:
-प्रश्न: {question}
 
 नियम:
 - उत्तर हिंदी में दें
@@ -61,25 +67,41 @@ def build_prompt(question, search_results, language):
 - श्लोक का स्रोत जरूर बताएं
 - उत्तर 150 शब्दों से कम रखें
 - अंत में प्रेरणादायक वाक्य लिखें
-"""
+- यदि पिछली बातचीत है तो उसका संदर्भ लें"""
     else:
-        prompt = f"""You are a wise spiritual guru who answers ONLY from the Bhagavad Gita.
+        system_prompt = f"""You are a wise spiritual guru who answers ONLY from the Bhagavad Gita.
 
 Here are the most relevant verses:
 {verses_text}
-
-Answer this question using ONLY the verses above:
-Question: {question}
 
 Rules:
 - Answer warmly like a loving guru
 - Always cite the chapter and verse number
 - Keep answer under 150 words
 - End with an encouraging line
-"""
-    return prompt
+- If there is prior conversation, refer to it naturally"""
 
-def ask_gita(question):
+    # Build messages array with history (last 5 exchanges)
+    messages = []
+
+    if conversation_history:
+        # Only take last 5 exchanges to keep context window small
+        recent_history = conversation_history[-5:]
+        for entry in recent_history:
+            messages.append({"role": "user", "content": entry["question"]})
+            messages.append({"role": "assistant", "content": entry["answer"]})
+
+    # Add current question
+    messages.append({"role": "user", "content": question})
+
+    return system_prompt, messages
+
+
+def ask_gita(question, conversation_history=None):
+    """
+    conversation_history: list of {question, answer} dicts from current session.
+    Pass None or [] for a fresh session with no context.
+    """
     print(f"\n🔍 Searching: '{question}'")
 
     # Step 1: Detect language
@@ -95,15 +117,18 @@ def ask_gita(question):
     search_results = search_relevant_verses(question)
     print(f"✅ Found {len(search_results['documents'][0])} verses")
 
-    # Step 4: Build prompt
-    prompt = build_prompt(question, search_results, language)
+    # Step 4: Build messages with history
+    system_prompt, messages = build_messages(
+        question, search_results, language, conversation_history
+    )
 
-    # Step 5: Ask Claude
+    # Step 5: Ask Claude with context
     print("⏳ Asking Claude AI...")
     message = anthropic_client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=500,
-        messages=[{"role": "user", "content": prompt}]
+        system=system_prompt,
+        messages=messages
     )
 
     answer = message.content[0].text
@@ -123,6 +148,7 @@ def ask_gita(question):
         "is_crisis": False,
         "resources": resources
     }
+
 
 # Test
 if __name__ == "__main__":

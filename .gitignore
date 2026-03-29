@@ -1,3 +1,21 @@
-.env
+# Virtual environment
 venv/
+
+# Environment variables (SECRET!)
+.env
+
+# Python cache
 __pycache__/
+*.pyc
+*.pyo
+
+# Database files
+*.db
+chroma_db/
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+desktop.ini
